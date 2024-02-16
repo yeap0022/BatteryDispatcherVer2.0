@@ -98,36 +98,40 @@ for i in range(tIndex):
     t = time[i]
     
     # Grid constraints
-    solver.Add(vGrid[i] == input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] + vBattPower[i])
-    solver.Add(vGrid[i] <= input["grid"]["max_buy_power"])
-    solver.Add(vGrid[i] >= -input["grid"]["max_sell_power"])
-    solver.Add(input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] + vDischarge[i] + vCharge[i] <= input["grid"]["max_import_power"])
-    solver.Add(input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] + vDischarge[i] + vCharge[i] >= -input["grid"]["max_export_power"])
+    solver.Add(vGrid[i] == input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] - vBattPower[i]) # Eqn. 1
+    solver.Add(vGrid[i] <= input["grid"]["max_buy_power"]) # Eqn. 2
+    solver.Add(vGrid[i] >= -input["grid"]["max_sell_power"]) # Eqn. 2
+    solver.Add(input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] - (vDischarge[i] + vCharge[i]) <= input["grid"]["max_import_power"]) # Eqn. 3
+    solver.Add(input["market"]["load"][t] - input["market"]["solar"][t] - input["market"]["wind"][t] - (vDischarge[i] + vCharge[i]) >= -input["grid"]["max_export_power"]) # Eqn. 3
     
     # Battery constraints
-    solver.Add(vCharge[i] >= -input["batt"]["max_charge_rate"] * vChargeStatus[i])
-    solver.Add(vDischarge[i] <= input["batt"]["max_discharge_rate"] * (1-vChargeStatus[i]))
-    solver.Add(vBattPower[i] == vCharge[i] + vDischarge[i])
+    solver.Add(vBattPower[i] == vCharge[i] + vDischarge[i]) # Eqn. 4
+    solver.Add(vCharge[i] >= -input["batt"]["max_charge_rate"] * vChargeStatus[i]) # Eqn. 5(a)
+    solver.Add(vDischarge[i] <= input["batt"]["max_discharge_rate"] * (1-vChargeStatus[i])) # Eqn. 5(b)
     
     if i == 0:
-        solver.Add(vSOC[i] == input["batt"]["initial_soc"] - dt / input["batt"]["capacity"] * (vCharge[i] * (1-input["batt"]["charge_eff"]) + vDischarge[i] / (1-input["batt"]["discharge_eff"])))
+        solver.Add(vSOC[i] == input["batt"]["initial_soc"] - dt / input["batt"]["capacity"] * (vCharge[i] * (1-input["batt"]["charge_eff"]) + vDischarge[i] / (1-input["batt"]["discharge_eff"]))) # Eqn. 6
     else:
-        solver.Add(vSOC[i] == vSOC[i-1] - dt / input["batt"]["capacity"] * (vCharge[i] * (1-input["batt"]["charge_eff"]) + vDischarge[i] / (1-input["batt"]["discharge_eff"])))
+        solver.Add(vSOC[i] == vSOC[i-1] - dt / input["batt"]["capacity"] * (vCharge[i] * (1-input["batt"]["charge_eff"]) + vDischarge[i] / (1-input["batt"]["discharge_eff"]))) # Eqn. 6
         
-    solver.Add(vSOC[i] >= input["batt"]["min_soc"])
-    solver.Add(vSOC[i] <= input["batt"]["max_soc"])
-
+    solver.Add(vSOC[i] >= input["batt"]["min_soc"]) # Eqn. 7
+    solver.Add(vSOC[i] <= input["batt"]["max_soc"]) # Eqn. 7
+    
 # Add objective
 obj = 0
 obj += sum([vGrid[i] * input["market"]["market_price_1"][time[i]] * dt for i in range(tIndex)])
 solver.Minimize(obj)
+
 status = solver.Solve()
 
 time_e = timeit.default_timer()
 runTime = round(time_e - time_s, 4)
 
-if status == solver.OPTIMAL or status == solver.FWASIBLE:
+if status == solver.OPTIMAL or status == solver.FEASIBLE:
     print("Solution is found.")
+    print("Number of variables =", solver.NumVariables())
+    print("Number of constraints =", solver.NumConstraints())
+    print("Computation time = ", runTime)
     
     # Extract solution values
     excelWriter = pd.ExcelWriter('output/Result.xlsx', engine='xlsxwriter')
@@ -143,7 +147,7 @@ if status == solver.OPTIMAL or status == solver.FWASIBLE:
                       [round(vSOC[i].solution_value(), 4) for i in range(tIndex)],
                       [int(vChargeStatus[i].solution_value()) for i in range(tIndex)]
                       ))
-    resultDF = pd.DataFrame(result, index=time, columns=["Grid Power Flow (kW)", "Battery Output (kW)", "Charging Power (kW)", "Discharging Power (kW)", "State-of-charge (SOC)", "Charge Status"])
+    resultDF = pd.DataFrame(result, index=timestamp, columns=["Grid Power Flow (kW)", "Battery Output (kW)", "Charging Power (kW)", "Discharging Power (kW)", "State-of-charge (SOC)", "Charge Status"])
     
     objValueDF.to_excel(excelWriter, sheet_name='Cost')
     resultDF.to_excel(excelWriter, sheet_name='Operation')
